@@ -1,0 +1,5 @@
+[alias]
+qbench = "bench --bench sort -- --quiet --format terse --discard-baseline --noplot"
+qbench-table = "run --quiet --bin criterion-table --"
+compare-radix = "bench --bench radix_vs_quicksort --"
+radix-probe = "run --release --quiet --bin radix-probe --"
