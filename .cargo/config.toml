@@ -2,4 +2,6 @@
 qbench = "bench --bench sort -- --quiet --format terse --discard-baseline --noplot"
 qbench-table = "run --quiet --bin criterion-table --"
 compare-radix = "bench --bench radix_vs_quicksort --"
+compare-msd-patterns = "bench --bench msd_patterns --"
+memory-bench = "bench --bench memory_usage"
 radix-probe = "run --release --quiet --bin radix-probe --"

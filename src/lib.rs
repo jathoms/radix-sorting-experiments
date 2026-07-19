@@ -1,7 +1,8 @@
-use rand::SeedableRng;
+use rand::{RngExt, SeedableRng};
 use rand::{rngs::StdRng, seq::SliceRandom};
 use rayon::prelude::*;
 use rdxsort::RdxSort;
+pub mod msd;
 
 const RADIX_11_BUCKETS: usize = 1 << 11;
 const RADIX_10_BUCKETS: usize = 1 << 10;
@@ -10,7 +11,6 @@ const RADIX_10_BUCKETS: usize = 1 << 10;
 #[allow(dead_code)]
 pub enum Distribution {
     Random,
-    Sorted,
     Reversed,
     FewUnique,
 }
@@ -22,24 +22,25 @@ impl Distribution {
     pub fn name(self) -> &'static str {
         match self {
             Self::Random => "random",
-            Self::Sorted => "sorted",
             Self::Reversed => "reversed",
             Self::FewUnique => "few_unique",
         }
     }
 
     pub fn values(self, size: usize) -> Vec<i32> {
-        let mut values = (0..size)
-            .map(|i| (i as i32).wrapping_mul(32).wrapping_sub(5))
-            .collect::<Vec<_>>();
+        let mut rng = StdRng::seed_from_u64(42);
+        let mut values: Vec<i32> = (&mut rng)
+            .random_iter()
+            .take(size)
+            // .map(|n: i32| ((n >> 24) | 256).abs())
+            // .map(|n: i32| n.abs())
+            .collect();
 
         match self {
             Self::Random => {
-                let mut rng = StdRng::seed_from_u64(41);
                 values.shuffle(&mut rng);
                 values
             }
-            Self::Sorted => values,
             Self::Reversed => {
                 values.reverse();
                 values
@@ -297,6 +298,9 @@ pub fn par_radix_sort_single_pass_in<const BUCKETS: usize, const STRIDE: usize>(
     let mut sum = 0;
     for i in 0..BUCKETS {
         let current = total_counts[i];
+        if current == 0 {
+            continue;
+        };
         total_counts[i] = sum;
         sum += current;
     }
