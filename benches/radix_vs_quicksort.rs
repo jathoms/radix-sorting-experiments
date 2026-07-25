@@ -1,25 +1,29 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use sorting_benchmarks::Distribution;
+use sorting_benchmarks::msd::aflag::msd_once_then_inplace_eager;
+#[allow(unused_imports)]
 use sorting_benchmarks::msd::aflag::{
     msd_inplace, msd_once_then_inplace, msd_once_then_inplace_new, par_msd_inplace,
     par_msd_inplace_eager,
 };
+#[allow(unused_imports)]
 use sorting_benchmarks::msd::sort::{
-    BUCKETS_4, BUCKETS_7, i32_first_shift, par_msd_radix_sort_in, par_sort_unstable,
-    par_sort_unstable_new,
+    BUCKETS_2, BUCKETS_4, BUCKETS_5, BUCKETS_6, BUCKETS_7, BUCKETS_8, i32_first_shift,
+    par_msd_radix_sort_in, par_sort_unstable, par_sort_unstable_new,
 };
 use sorting_benchmarks::msd::uninit_impl::par_msd_radix_sort_7bit_new_uninit;
+#[allow(unused_imports)]
+use sorting_benchmarks::{Radix11Scratch, par_radix_sort_i32_11bit_with_scratch};
 use std::hint::black_box;
 use std::time::Duration;
 
 const SIZES: &[usize] = &[
-    // 10_000, 25_000, 50_000, 75_000, 100_000, 150_000, 250_000, 500_000, 750_000,
-    // 1_000_000,
-    // 2_500_000,
-    5_000_000,
-    10_000_000,
-    100_000_000,
-    1_000_000_000,
+    10_000, 25_000, 50_000, 75_000, 100_000, 150_000, 250_000, 500_000, 750_000, 1_000_000,
+    2_500_000,
+    // 5_000_000,
+    // 10_000_000,
+    // 100_000_000,
+    // 1_000_000_000,
 ];
 
 fn radix_vs_quicksort(c: &mut Criterion) {
@@ -174,8 +178,9 @@ fn radix_vs_quicksort(c: &mut Criterion) {
                 b.iter_batched(
                     || input.to_vec(),
                     |mut values| {
-                        let sorted = msd_once_then_inplace_new(&mut values);
-                        black_box(sorted);
+                        let mut dst = vec![0i32; input.len()];
+                        msd_once_then_inplace_eager(&mut values, &mut dst);
+                        black_box(&dst);
                     },
                     criterion::BatchSize::LargeInput,
                 );

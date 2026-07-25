@@ -1,6 +1,6 @@
 use core::slice;
 
-use crate::msd::sort::{msd_radix_partition, par_msd_radix_partition};
+use crate::msd::sort::{BUCKETS_4, BUCKETS_7, i32_first_shift, msd_radix_partition};
 
 pub fn msd_inplace(src: &mut [i32]) {
     for shift in [0, 8, 16, 24] {
@@ -44,8 +44,8 @@ pub fn msd_once_then_inplace(src: &mut [i32], dst: &mut [i32]) {
 }
 
 pub fn msd_once_then_inplace_eager(src: &mut [i32], dst: &mut [i32]) {
-    let mut counts = [0; 128];
-    msd_radix_partition::<128>(src, dst, &mut counts, 24);
+    let mut counts = [0; BUCKETS_7];
+    msd_radix_partition::<BUCKETS_7>(src, dst, &mut counts, i32_first_shift::<BUCKETS_7>());
 
     rayon::scope(|scope| {
         let mut dst_rest = dst;
@@ -62,7 +62,7 @@ pub fn msd_once_then_inplace_eager(src: &mut [i32], dst: &mut [i32]) {
                     })
                 } else {
                     scope.spawn(|_| {
-                        par_msd_inplace_eager(bucket_dst, 16);
+                        par_msd_inplace_eager::<BUCKETS_7, BUCKETS_4>(bucket_dst, 18);
                     });
                 }
             }
@@ -145,13 +145,16 @@ pub fn msd_inplace_one_pass(src: &mut [i32], shift: usize) -> [usize; 256] {
     end
 }
 
-pub fn par_msd_inplace_eager(src: &mut [i32], shift: usize) {
-    const BUCKETS: usize = 128;
-    const MASK: u32 = (BUCKETS as u32) - 1;
+pub fn par_msd_inplace_eager<const BUCKETS: usize, const RESIDUAL_BUCKETS: usize>(
+    src: &mut [i32],
+    shift: usize,
+) {
+    let bits = radix_bits::<BUCKETS>();
+    let mask = (BUCKETS as u32) - 1;
     let mut counts = [0; BUCKETS];
     for value in src.iter() {
         let key = ((*value as u32) ^ 0x8000_0000) >> shift;
-        let bucket = (key & MASK) as usize;
+        let bucket = (key & mask) as usize;
         counts[bucket] += 1;
     }
 
@@ -178,7 +181,7 @@ pub fn par_msd_inplace_eager(src: &mut [i32], shift: usize) {
                 let mut x = src[head[b]];
                 loop {
                     let key = ((x as u32) ^ 0x8000_0000) >> shift;
-                    let x_bucket = (key & MASK) as usize;
+                    let x_bucket = (key & mask) as usize;
                     if x_bucket == b {
                         break;
                     };
@@ -200,9 +203,19 @@ pub fn par_msd_inplace_eager(src: &mut [i32], shift: usize) {
                                 scope.spawn(|_| {
                                     x_bucket_slice.sort_unstable();
                                 })
+                            } else if shift < bits {
+                                scope.spawn(|_| {
+                                    msd_inplace_one_pass_generic::<RESIDUAL_BUCKETS>(
+                                        x_bucket_slice,
+                                        0,
+                                    );
+                                });
                             } else {
                                 scope.spawn(|_| {
-                                    par_msd_inplace_eager(x_bucket_slice, shift - 7);
+                                    par_msd_inplace_eager::<BUCKETS, RESIDUAL_BUCKETS>(
+                                        x_bucket_slice,
+                                        shift - bits,
+                                    );
                                 });
                             }
                         };
@@ -225,14 +238,67 @@ pub fn par_msd_inplace_eager(src: &mut [i32], shift: usize) {
                     scope.spawn(|_| {
                         b_bucket_slice.sort_unstable();
                     })
+                } else if shift < bits {
+                    scope.spawn(|_| {
+                        msd_inplace_one_pass_generic::<RESIDUAL_BUCKETS>(b_bucket_slice, 0);
+                    });
                 } else {
                     scope.spawn(|_| {
-                        par_msd_inplace_eager(b_bucket_slice, shift - 7);
+                        par_msd_inplace_eager::<BUCKETS, RESIDUAL_BUCKETS>(
+                            b_bucket_slice,
+                            shift - bits,
+                        );
                     });
                 }
             };
         }
     });
+}
+
+fn msd_inplace_one_pass_generic<const BUCKETS: usize>(
+    src: &mut [i32],
+    shift: usize,
+) -> [usize; BUCKETS] {
+    let mask = (BUCKETS as u32) - 1;
+    let mut counts = [0; BUCKETS];
+    for value in src.iter() {
+        let key = ((*value as u32) ^ 0x8000_0000) >> shift;
+        let bucket = (key & mask) as usize;
+        counts[bucket] += 1;
+    }
+
+    let mut head = counts;
+    let mut end = [0; BUCKETS];
+
+    let mut sum = 0;
+    for (count, v_end) in head.iter_mut().zip(end.iter_mut()) {
+        let current = *count;
+        *count = sum;
+        sum += current;
+        *v_end = sum;
+    }
+    for b in 0..BUCKETS {
+        while head[b] < end[b] {
+            let mut x = src[head[b]];
+            loop {
+                let key = ((x as u32) ^ 0x8000_0000) >> shift;
+                let x_bucket = (key & mask) as usize;
+                if x_bucket == b {
+                    break;
+                };
+                let x_head = &mut head[x_bucket];
+                std::mem::swap(&mut x, &mut src[*x_head]);
+                *x_head += 1;
+            }
+            src[head[b]] = x;
+            head[b] += 1;
+        }
+    }
+    end
+}
+
+const fn radix_bits<const BUCKETS: usize>() -> usize {
+    BUCKETS.ilog2() as usize
 }
 
 #[cfg(test)]
@@ -286,7 +352,7 @@ mod tests {
         let mut v2 = v.clone();
 
         v1.sort_unstable();
-        par_msd_inplace_eager(&mut v2, 24);
+        par_msd_inplace_eager::<BUCKETS_7, BUCKETS_4>(&mut v2, i32_first_shift::<BUCKETS_7>());
 
         assert_eq!(v1, v2)
     }
