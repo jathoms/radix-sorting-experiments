@@ -1,3 +1,14 @@
+pub fn single_msd_pass_into_quicksort_new(values: &mut [i32]) -> Vec<i32> {
+    let mut dst = vec![0; values.len()];
+    single_msd_pass_into_quicksort(values, &mut dst);
+    dst
+}
+pub fn single_msd_pass_into_quicksort(values: &mut [i32], dst: &mut [i32]) {
+    let mut counts = [0usize; 1024];
+    msd_radix_partition::<1024>(values, dst, &mut counts, i32_first_shift::<1024>());
+    par_sort_unstable(dst);
+}
+
 pub fn msd_radix_sort_8bit(values: &mut [i32]) {
     let len = values.len();
     let mut dst = vec![0i32; len];
@@ -63,6 +74,7 @@ pub const BUCKETS_2: usize = 1 << 2;
 pub const BUCKETS_1: usize = 1 << 1;
 
 const DEFAULT_FALLBACK_THRESHOLD: usize = 50_000;
+const PARALLEL_PARTITION_THRESHOLD: usize = 250_000;
 
 pub fn par_msd_radix_sort_8bit(values: &mut [i32]) {
     let mut dst = vec![0i32; values.len()];
@@ -109,7 +121,7 @@ pub fn par_msd_radix_sort_in<const BUCKETS: usize, const RESIDUAL_BUCKETS: usize
     dst: &mut [i32],
     shift: usize,
 ) {
-    par_msd_radix_sort_in_threshold_impl::<BUCKETS, RESIDUAL_BUCKETS, false>(
+    par_msd_radix_sort_in_threshold_impl::<BUCKETS, RESIDUAL_BUCKETS>(
         src,
         dst,
         shift,
@@ -123,7 +135,7 @@ pub fn par_msd_radix_sort_in_threshold<const BUCKETS: usize, const RESIDUAL_BUCK
     shift: usize,
     fallback_threshold: usize,
 ) {
-    par_msd_radix_sort_in_threshold_impl::<BUCKETS, RESIDUAL_BUCKETS, false>(
+    par_msd_radix_sort_in_threshold_impl::<BUCKETS, RESIDUAL_BUCKETS>(
         src,
         dst,
         shift,
@@ -131,28 +143,7 @@ pub fn par_msd_radix_sort_in_threshold<const BUCKETS: usize, const RESIDUAL_BUCK
     );
 }
 
-pub fn par_msd_radix_sort_in_threshold_low_cardinality<
-    const BUCKETS: usize,
-    const RESIDUAL_BUCKETS: usize,
->(
-    src: &mut [i32],
-    dst: &mut [i32],
-    shift: usize,
-    fallback_threshold: usize,
-) {
-    par_msd_radix_sort_in_threshold_impl::<BUCKETS, RESIDUAL_BUCKETS, true>(
-        src,
-        dst,
-        shift,
-        fallback_threshold,
-    );
-}
-
-fn par_msd_radix_sort_in_threshold_impl<
-    const BUCKETS: usize,
-    const RESIDUAL_BUCKETS: usize,
-    const CHECK_LOW_CARDINALITY: bool,
->(
+fn par_msd_radix_sort_in_threshold_impl<const BUCKETS: usize, const RESIDUAL_BUCKETS: usize>(
     src: &mut [i32],
     dst: &mut [i32],
     shift: usize,
@@ -167,11 +158,10 @@ fn par_msd_radix_sort_in_threshold_impl<
     }
 
     let mut counts = [0usize; BUCKETS];
-    if !par_msd_radix_partition::<BUCKETS, CHECK_LOW_CARDINALITY>(src, dst, &mut counts, shift) {
-        if !output_lands_in_src::<BUCKETS>(shift) {
-            dst.copy_from_slice(src);
-        }
-        return;
+    if src.len() >= PARALLEL_PARTITION_THRESHOLD {
+        par_msd_radix_partition::<BUCKETS>(src, dst, &mut counts, shift);
+    } else {
+        msd_radix_partition::<BUCKETS>(src, dst, &mut counts, shift);
     }
 
     // println!("copying {dst:?} into {src:?}");
@@ -205,12 +195,11 @@ fn par_msd_radix_sort_in_threshold_impl<
                         if shift < bits {
                             par_msd_radix_sort_final::<RESIDUAL_BUCKETS>(bucket_dst, bucket_src);
                         } else {
-                            par_msd_radix_sort_in_threshold_impl::<
-                                BUCKETS,
-                                RESIDUAL_BUCKETS,
-                                CHECK_LOW_CARDINALITY,
-                            >(
-                                bucket_dst, bucket_src, shift - bits, fallback_threshold
+                            par_msd_radix_sort_in_threshold_impl::<BUCKETS, RESIDUAL_BUCKETS>(
+                                bucket_dst,
+                                bucket_src,
+                                shift - bits,
+                                fallback_threshold,
                             );
                         }
                     });
@@ -224,12 +213,41 @@ fn par_msd_radix_sort_in_threshold_impl<
     });
 }
 
-fn par_msd_radix_partition<const BUCKETS: usize, const CHECK_LOW_CARDINALITY: bool>(
+pub fn msd_radix_partition<const BUCKETS: usize>(
     src: &mut [i32],
     dst: &mut [i32],
     counts: &mut [usize; BUCKETS],
     shift: usize,
-) -> bool {
+) {
+    let mask = (BUCKETS as u32) - 1;
+
+    for value in src.iter() {
+        let key = ((*value as u32) ^ 0x8000_0000) >> shift;
+        let bucket = (key & mask) as usize;
+        counts[bucket] += 1;
+    }
+
+    let mut sum = 0;
+    for count in counts.iter_mut() {
+        let current = *count;
+        *count = sum;
+        sum += current;
+    }
+
+    for value in src {
+        let key = ((*value as u32) ^ 0x8000_0000) >> shift;
+        let bucket = (key & mask) as usize;
+        dst[counts[bucket]] = *value;
+        counts[bucket] += 1;
+    }
+}
+
+pub fn par_msd_radix_partition<const BUCKETS: usize>(
+    src: &mut [i32],
+    dst: &mut [i32],
+    counts: &mut [usize; BUCKETS],
+    shift: usize,
+) {
     let n_chunks = rayon::current_num_threads();
     let chunk_size = src.len().div_ceil(n_chunks);
     let mask = (BUCKETS as u32) - 1;
@@ -247,26 +265,9 @@ fn par_msd_radix_partition<const BUCKETS: usize, const CHECK_LOW_CARDINALITY: bo
             }
         });
 
-    let mut non_empty = 0;
-    let mut max_bucket = 0;
     for bucket in 0..BUCKETS {
         let count = chunked_counts.iter().map(|chunk| chunk[bucket]).sum();
         counts[bucket] = count;
-        if count != 0 {
-            non_empty += 1;
-            max_bucket = max_bucket.max(count);
-        }
-    }
-
-    if CHECK_LOW_CARDINALITY
-        && should_fallback_for_low_cardinality::<BUCKETS>(non_empty, max_bucket, src.len())
-    {
-        if src.len() >= 250_000 {
-            src.par_sort_unstable();
-        } else {
-            src.sort_unstable();
-        }
-        return false;
     }
 
     let mut sum = 0;
@@ -300,16 +301,6 @@ fn par_msd_radix_partition<const BUCKETS: usize, const CHECK_LOW_CARDINALITY: bo
                 offsets[bucket] += 1;
             }
         });
-
-    true
-}
-
-fn should_fallback_for_low_cardinality<const BUCKETS: usize>(
-    non_empty: usize,
-    max_bucket: usize,
-    len: usize,
-) -> bool {
-    non_empty <= (BUCKETS / 16).max(1) || max_bucket * 100 >= len * 95
 }
 
 fn par_msd_radix_sort_final<const BUCKETS: usize>(src: &mut [i32], dst: &mut [i32]) {
@@ -396,26 +387,6 @@ mod tests {
         };
 
         assert_eq!(&v1, sorted, "failed for {BUCKETS} buckets");
-
-        let mut v2 = v.clone();
-        let mut dst = v.clone();
-        par_msd_radix_sort_in_threshold_low_cardinality::<BUCKETS, RESIDUAL_BUCKETS>(
-            &mut v2,
-            &mut dst,
-            i32_first_shift::<BUCKETS>(),
-            DEFAULT_FALLBACK_THRESHOLD,
-        );
-
-        let sorted = if output_lands_in_src::<BUCKETS>(i32_first_shift::<BUCKETS>()) {
-            &v2
-        } else {
-            &dst
-        };
-
-        assert_eq!(
-            &v1, sorted,
-            "low-cardinality check failed for {BUCKETS} buckets"
-        )
     }
 }
 use rayon::prelude::*;
