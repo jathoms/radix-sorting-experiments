@@ -214,7 +214,7 @@ fn par_msd_radix_sort_in_threshold_impl<const BUCKETS: usize, const RESIDUAL_BUC
 }
 
 pub fn msd_radix_partition<const BUCKETS: usize>(
-    src: &mut [i32],
+    src: &[i32],
     dst: &mut [i32],
     counts: &mut [usize; BUCKETS],
     shift: usize,

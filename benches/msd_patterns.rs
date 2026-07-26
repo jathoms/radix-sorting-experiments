@@ -1,6 +1,14 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
-use sorting_benchmarks::msd::sort::{par_msd_radix_sort_7bit, par_sort_unstable};
+#[allow(unused_imports)]
+use sorting_benchmarks::msd::aflag::{
+    msd_once_then_inplace_eager, msd_once_then_inplace_new, par_msd_inplace_eager,
+};
+#[allow(unused_imports)]
+use sorting_benchmarks::msd::sort::{
+    BUCKETS_4, BUCKETS_7, i32_first_shift, par_msd_radix_sort_7bit, par_msd_radix_sort_in,
+    par_sort_unstable,
+};
 use sorting_benchmarks::{Radix11Scratch, par_radix_sort_i32_11bit_with_scratch};
 use std::hint::black_box;
 use std::time::Duration;
@@ -10,6 +18,7 @@ const SIZES: &[usize] = &[
 ];
 
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 enum Pattern {
     Random,
     Sorted,
@@ -19,6 +28,7 @@ enum Pattern {
 }
 
 impl Pattern {
+    #[allow(dead_code)]
     const ALL: &[Self] = &[
         Self::Random,
         Self::Sorted,
@@ -49,21 +59,45 @@ impl Pattern {
 }
 
 fn msd_patterns(c: &mut Criterion) {
-    for pattern in Pattern::ALL {
+    for pattern in [Pattern::SameHighByte] {
         let mut group = c.benchmark_group(format!("msd_patterns/{}", pattern.name()));
 
         for &size in SIZES {
             let input = pattern.values(size);
             group.throughput(Throughput::Elements(size as u64));
 
-            bench_sort(
+            bench_to_output(
                 &mut group,
                 "par_sort_unstable",
                 size,
                 &input,
-                par_sort_unstable,
+                |input, output| {
+                    output.copy_from_slice(input);
+                    par_sort_unstable(output);
+                    black_box(output);
+                },
             );
-            bench_sort(&mut group, "par_msd", size, &input, par_msd_radix_sort_7bit);
+            bench_to_output(&mut group, "par_msd", size, &input, |input, output| {
+                output.copy_from_slice(input);
+                let mut scratch = vec![0i32; input.len()];
+                par_msd_radix_sort_in::<BUCKETS_7, BUCKETS_4>(
+                    output,
+                    &mut scratch,
+                    i32_first_shift::<BUCKETS_7>(),
+                );
+                black_box((output, &scratch));
+            });
+            bench_to_output(
+                &mut group,
+                "par_msd_once_eager",
+                size,
+                &input,
+                |input, output| {
+                    let mut values = input.to_vec();
+                    msd_once_then_inplace_eager(&mut values, output);
+                    black_box(output);
+                },
+            );
             // bench_lsd_scratch(&mut group, "par_lsd_11bit_scratch", size, &input);
         }
 
@@ -71,25 +105,22 @@ fn msd_patterns(c: &mut Criterion) {
     }
 }
 
-fn bench_sort(
+fn bench_to_output<F>(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     name: &str,
     size: usize,
     input: &[i32],
-    sort: fn(&mut [i32]),
-) {
+    mut sort: F,
+) where
+    F: FnMut(&[i32], &mut [i32]),
+{
     group.bench_with_input(BenchmarkId::new(name, size), input, |b, input| {
-        b.iter_batched(
-            || input.to_vec(),
-            |mut values| {
-                sort(&mut values);
-                black_box(values)
-            },
-            criterion::BatchSize::LargeInput,
-        );
+        let mut output = vec![0i32; input.len()];
+        b.iter(|| sort(input, &mut output));
     });
 }
 
+#[allow(dead_code)]
 fn bench_lsd_scratch(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     name: &str,
@@ -133,9 +164,9 @@ fn pseudo_random_i32(i: u32) -> i32 {
 criterion_group! {
     name = benches;
     config = Criterion::default()
-        .warm_up_time(Duration::from_millis(500))
-        .measurement_time(Duration::from_secs(1))
-        .sample_size(10);
+        .warm_up_time(Duration::from_millis(2000))
+        .measurement_time(Duration::from_secs(5))
+        .sample_size(50);
     targets = msd_patterns
 }
 criterion_main!(benches);

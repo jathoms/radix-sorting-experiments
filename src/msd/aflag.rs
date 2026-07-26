@@ -7,13 +7,13 @@ pub fn msd_inplace(src: &mut [i32]) {
         msd_inplace_one_pass(src, shift);
     }
 }
-pub fn msd_once_then_inplace_new(values: &mut [i32]) -> Vec<i32> {
+pub fn msd_once_then_inplace_new(values: &[i32]) -> Vec<i32> {
     let mut dst = vec![0; values.len()];
     msd_once_then_inplace(values, &mut dst);
     dst
 }
 
-pub fn msd_once_then_inplace(src: &mut [i32], dst: &mut [i32]) {
+pub fn msd_once_then_inplace(src: &[i32], dst: &mut [i32]) {
     let mut counts = [0; 256];
     msd_radix_partition::<256>(src, dst, &mut counts, 24);
 

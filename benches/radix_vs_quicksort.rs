@@ -11,7 +11,6 @@ use sorting_benchmarks::msd::sort::{
     BUCKETS_2, BUCKETS_4, BUCKETS_5, BUCKETS_6, BUCKETS_7, BUCKETS_8, i32_first_shift,
     par_msd_radix_sort_in, par_sort_unstable, par_sort_unstable_new,
 };
-use sorting_benchmarks::msd::uninit_impl::par_msd_radix_sort_7bit_new_uninit;
 #[allow(unused_imports)]
 use sorting_benchmarks::{Radix11Scratch, par_radix_sort_i32_11bit_with_scratch};
 use std::hint::black_box;
@@ -125,21 +124,6 @@ fn radix_vs_quicksort(c: &mut Criterion) {
         //     },
         // );
 
-        group.bench_with_input(
-            BenchmarkId::new("par_msd_7bit_uninit", size),
-            &input,
-            |b, input| {
-                b.iter_batched(
-                    || input.to_vec(),
-                    |values| {
-                        let sorted = par_msd_radix_sort_7bit_new_uninit(&values);
-                        black_box(sorted);
-                    },
-                    criterion::BatchSize::LargeInput,
-                );
-            },
-        );
-
         // group.bench_with_input(
         //     BenchmarkId::new("par_msd_inplace", size),
         //     &input,
@@ -241,9 +225,9 @@ fn radix_vs_quicksort(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default()
-        .warm_up_time(Duration::from_millis(500))
-        .measurement_time(Duration::from_secs(1))
-        .sample_size(10);
+        .warm_up_time(Duration::from_millis(2500))
+        .measurement_time(Duration::from_secs(5))
+        .sample_size(50);
     targets = radix_vs_quicksort
 }
 criterion_main!(benches);
