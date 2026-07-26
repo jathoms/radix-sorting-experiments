@@ -1,6 +1,8 @@
 use core::slice;
 
-use crate::msd::sort::{BUCKETS_4, BUCKETS_7, i32_first_shift, msd_radix_partition};
+use crate::msd::sort::{
+    BUCKETS_4, BUCKETS_7, BUCKETS_11, i32_first_shift, msd_radix_partition, par_msd_radix_partition,
+};
 
 pub fn msd_inplace(src: &mut [i32]) {
     for shift in [0, 8, 16, 24] {
@@ -43,7 +45,7 @@ pub fn msd_once_then_inplace(src: &[i32], dst: &mut [i32]) {
     });
 }
 
-pub fn msd_once_then_inplace_eager(src: &mut [i32], dst: &mut [i32]) {
+pub fn msd_once_then_inplace_eager(src: &[i32], dst: &mut [i32]) {
     let mut counts = [0; BUCKETS_7];
     msd_radix_partition::<BUCKETS_7>(src, dst, &mut counts, i32_first_shift::<BUCKETS_7>());
 
@@ -56,15 +58,15 @@ pub fn msd_once_then_inplace_eager(src: &mut [i32], dst: &mut [i32]) {
             let (bucket_dst, next_dst) = dst_rest.split_at_mut(bucket_len);
 
             if bucket_len >= 2 {
-                if bucket_len < 75_000 {
-                    scope.spawn(|_| {
-                        bucket_dst.sort_unstable();
-                    })
-                } else {
-                    scope.spawn(|_| {
-                        par_msd_inplace_eager::<BUCKETS_7, BUCKETS_4>(bucket_dst, 18);
-                    });
-                }
+                // if bucket_len < 75_000 {
+                //     scope.spawn(|_| {
+                //         bucket_dst.sort_unstable();
+                //     })
+                // } else {
+                scope.spawn(|_| {
+                    par_msd_inplace_eager::<BUCKETS_7, BUCKETS_4>(bucket_dst, 18);
+                });
+                // }
             }
 
             dst_rest = next_dst;
@@ -73,6 +75,35 @@ pub fn msd_once_then_inplace_eager(src: &mut [i32], dst: &mut [i32]) {
     });
 }
 
+pub fn msd_once_then_inplace_eager_11(src: &[i32], dst: &mut [i32]) {
+    let mut counts = [0; BUCKETS_11];
+    par_msd_radix_partition::<BUCKETS_11>(src, dst, &mut counts, i32_first_shift::<BUCKETS_11>());
+
+    rayon::scope(|scope| {
+        let mut dst_rest = dst;
+        let mut start = 0;
+
+        for end in counts {
+            let bucket_len = end - start;
+            let (bucket_dst, next_dst) = dst_rest.split_at_mut(bucket_len);
+
+            if bucket_len >= 2 {
+                // if bucket_len < 75_000 {
+                //     scope.spawn(|_| {
+                //         bucket_dst.sort_unstable();
+                //     })
+                // } else {
+                scope.spawn(|_| {
+                    par_msd_inplace_eager::<BUCKETS_7, BUCKETS_4>(bucket_dst, 14);
+                });
+                // }
+            }
+
+            dst_rest = next_dst;
+            start = end;
+        }
+    });
+}
 pub fn par_msd_inplace(src: &mut [i32], shift: usize) {
     let end = msd_inplace_one_pass(src, shift);
     if shift == 0 {
@@ -157,6 +188,11 @@ pub fn par_msd_inplace_eager<const BUCKETS: usize, const RESIDUAL_BUCKETS: usize
         let bucket = (key & mask) as usize;
         counts[bucket] += 1;
     }
+    // let n_unique_buckets = counts.iter().filter(|&&n| n > 0).count();
+    //
+    // if n_unique_buckets == 1 {
+    //     par_msd_inplace_eager::<BUCKETS, RESIDUAL_BUCKETS>(src, shift - bits);
+    // }
 
     let mut head = counts;
     let mut end = [0; BUCKETS];
@@ -199,17 +235,14 @@ pub fn par_msd_inplace_eager<const BUCKETS: usize, const RESIDUAL_BUCKETS: usize
                             let x_bucket_ptr = src.as_mut_ptr().add(x_start);
                             let x_bucket_slice =
                                 slice::from_raw_parts_mut(x_bucket_ptr, x_bucket_len);
-                            if x_bucket_len < 75_000 {
-                                scope.spawn(|_| {
-                                    x_bucket_slice.sort_unstable();
-                                })
-                            } else if shift < bits {
-                                scope.spawn(|_| {
-                                    msd_inplace_one_pass_generic::<RESIDUAL_BUCKETS>(
-                                        x_bucket_slice,
-                                        0,
-                                    );
-                                });
+                            // if x_bucket_len < 75_000 {
+                            //     scope.spawn(|_| {
+                            //         x_bucket_slice.sort_unstable();
+                            //     })
+                            if shift < bits {
+                                // scope.spawn(|_| {
+                                msd_inplace_one_pass_generic::<RESIDUAL_BUCKETS>(x_bucket_slice, 0);
+                                // });
                             } else {
                                 scope.spawn(|_| {
                                     par_msd_inplace_eager::<BUCKETS, RESIDUAL_BUCKETS>(
@@ -234,11 +267,11 @@ pub fn par_msd_inplace_eager<const BUCKETS: usize, const RESIDUAL_BUCKETS: usize
             unsafe {
                 let b_bucket_ptr = src.as_mut_ptr().add(b_start);
                 let b_bucket_slice = slice::from_raw_parts_mut(b_bucket_ptr, b_bucket_len);
-                if b_bucket_len < 75_000 {
-                    scope.spawn(|_| {
-                        b_bucket_slice.sort_unstable();
-                    })
-                } else if shift < bits {
+                // if b_bucket_len < 75_000 {
+                //     scope.spawn(|_| {
+                //         b_bucket_slice.sort_unstable();
+                //     })
+                if shift < bits {
                     scope.spawn(|_| {
                         msd_inplace_one_pass_generic::<RESIDUAL_BUCKETS>(b_bucket_slice, 0);
                     });

@@ -64,6 +64,7 @@ pub fn msd_radix_sort_8bit_in(src: &mut [i32], dst: &mut [i32], shift: usize) {
     }
 }
 
+pub const BUCKETS_11: usize = 1 << 11;
 pub const BUCKETS_8: usize = 1 << 8;
 pub const BUCKETS_7: usize = 1 << 7;
 pub const BUCKETS_6: usize = 1 << 6;
@@ -100,8 +101,9 @@ pub fn par_msd_radix_sort_7bit(values: &mut [i32]) {
 }
 
 pub fn par_sort_unstable_new(values: &mut [i32]) -> Vec<i32> {
-    values.par_sort_unstable();
-    values.to_vec()
+    let mut output = values.to_vec();
+    output.par_sort_unstable();
+    output
 }
 
 pub fn par_sort_unstable(values: &mut [i32]) {
@@ -243,7 +245,7 @@ pub fn msd_radix_partition<const BUCKETS: usize>(
 }
 
 pub fn par_msd_radix_partition<const BUCKETS: usize>(
-    src: &mut [i32],
+    src: &[i32],
     dst: &mut [i32],
     counts: &mut [usize; BUCKETS],
     shift: usize,

@@ -1,11 +1,13 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use sorting_benchmarks::Distribution;
-use sorting_benchmarks::msd::aflag::msd_once_then_inplace_eager;
 #[allow(unused_imports)]
 use sorting_benchmarks::msd::aflag::{
-    msd_inplace, msd_once_then_inplace, msd_once_then_inplace_new, par_msd_inplace,
+    msd_inplace, msd_once_then_inplace, msd_once_then_inplace_eager,
+    msd_once_then_inplace_eager_11, msd_once_then_inplace_new, par_msd_inplace,
     par_msd_inplace_eager,
 };
+use sorting_benchmarks::msd::paradis::{paradis_sort_i32_new, paradis_sort_i32_to_output};
+use sorting_benchmarks::msd::paradis_uninit::paradis_sort_i32_new_uninit;
 #[allow(unused_imports)]
 use sorting_benchmarks::msd::sort::{
     BUCKETS_2, BUCKETS_4, BUCKETS_5, BUCKETS_6, BUCKETS_7, BUCKETS_8, i32_first_shift,
@@ -63,18 +65,72 @@ fn radix_vs_quicksort(c: &mut Criterion) {
             },
         );
 
+        group.bench_with_input(
+            BenchmarkId::new("par_sort_unstable_reuse_output", size),
+            &input,
+            |b, input| {
+                let mut output = vec![0i32; input.len()];
+                b.iter(|| {
+                    output.copy_from_slice(input);
+                    par_sort_unstable(&mut output);
+                    black_box(&output);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("paradis_like", size),
+            &input,
+            |b, input| {
+                b.iter_batched(
+                    || input.to_vec(),
+                    |values| {
+                        let sorted = paradis_sort_i32_new(&values);
+                        black_box(sorted);
+                    },
+                    criterion::BatchSize::LargeInput,
+                );
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("paradis_like_uninit", size),
+            &input,
+            |b, input| {
+                b.iter_batched(
+                    || input.to_vec(),
+                    |values| {
+                        let sorted = paradis_sort_i32_new_uninit(&values);
+                        black_box(sorted);
+                    },
+                    criterion::BatchSize::LargeInput,
+                );
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("paradis_like_reuse_output", size),
+            &input,
+            |b, input| {
+                let mut output = vec![0i32; input.len()];
+                b.iter(|| {
+                    paradis_sort_i32_to_output(input, &mut output);
+                    black_box(&output);
+                });
+            },
+        );
+
         // group.bench_with_input(
         //     BenchmarkId::new("par_radix_sort_i32_11bit_scratch", size),
         //     &input,
         //     |b, input| {
-        //         let mut scratch = Radix11Scratch::new();
-        //         let mut warmup = input.to_vec();
-        //         par_radix_sort_i32_11bit_with_scratch(&mut warmup, &mut scratch);
         //         b.iter_batched(
         //             || input.to_vec(),
-        //             |mut values| {
-        //                 par_radix_sort_i32_11bit_with_scratch(&mut values, &mut scratch);
-        //                 black_box(values);
+        //             |values| {
+        //                 let mut scratch = Radix11Scratch::new();
+        //                 let mut dst = values.to_vec();
+        //                 par_radix_sort_i32_11bit_with_scratch(&mut dst, &mut scratch);
+        //                 black_box(dst);
         //             },
         //             criterion::BatchSize::LargeInput,
         //         );
@@ -155,36 +211,51 @@ fn radix_vs_quicksort(c: &mut Criterion) {
         //     },
         // );
 
-        group.bench_with_input(
-            BenchmarkId::new("par_msd_once_eager", size),
-            &input,
-            |b, input| {
-                b.iter_batched(
-                    || input.to_vec(),
-                    |mut values| {
-                        let mut dst = vec![0i32; input.len()];
-                        msd_once_then_inplace_eager(&mut values, &mut dst);
-                        black_box(&dst);
-                    },
-                    criterion::BatchSize::LargeInput,
-                );
-            },
-        );
-
         // group.bench_with_input(
-        //     BenchmarkId::new("par_msd_eager", size),
+        //     BenchmarkId::new("par_msd_once_eager", size),
         //     &input,
         //     |b, input| {
         //         b.iter_batched(
         //             || input.to_vec(),
         //             |mut values| {
-        //                 par_msd_inplace_eager(&mut values, 24);
-        //                 black_box(values);
+        //                 let mut dst = vec![0i32; input.len()];
+        //                 msd_once_then_inplace_eager(&mut values, &mut dst);
+        //                 black_box(&dst);
         //             },
         //             criterion::BatchSize::LargeInput,
         //         );
         //     },
         // );
+
+        // group.bench_with_input(
+        //     BenchmarkId::new("par_msd_once_eager_11", size),
+        //     &input,
+        //     |b, input| {
+        //         b.iter_batched(
+        //             || input.to_vec(),
+        //             |mut values| {
+        //                 let mut dst = vec![0i32; input.len()];
+        //                 msd_once_then_inplace_eager_11(&mut values, &mut dst);
+        //                 black_box(&dst);
+        //             },
+        //             criterion::BatchSize::LargeInput,
+        //         );
+        //     },
+        // );
+        // // group.bench_with_input(
+        // //     BenchmarkId::new("par_msd_eager", size),
+        // //     &input,
+        // //     |b, input| {
+        // //         b.iter_batched(
+        // //             || input.to_vec(),
+        // //             |mut values| {
+        // //                 par_msd_inplace_eager(&mut values, 24);
+        // //                 black_box(values);
+        // //             },
+        // //             criterion::BatchSize::LargeInput,
+        // //         );
+        // //     },
+        // // );
 
         // group.bench_with_input(
         //     BenchmarkId::new("par_msd_5bit", size),
@@ -225,9 +296,9 @@ fn radix_vs_quicksort(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default()
-        .warm_up_time(Duration::from_millis(2500))
-        .measurement_time(Duration::from_secs(5))
-        .sample_size(50);
+        .warm_up_time(Duration::from_millis(500))
+        .measurement_time(Duration::from_secs(1))
+        .sample_size(10);
     targets = radix_vs_quicksort
 }
 criterion_main!(benches);

@@ -1,7 +1,6 @@
 use rand::{RngExt, SeedableRng};
 use rand::{rngs::StdRng, seq::SliceRandom};
 use rayon::prelude::*;
-use rdxsort::RdxSort;
 pub mod msd;
 
 const RADIX_11_BUCKETS: usize = 1 << 11;
@@ -63,10 +62,6 @@ pub fn par_sort_unstable(values: &mut [i32]) {
     values.par_sort_unstable();
 }
 
-pub fn rdxsort(values: &mut [i32]) {
-    values.rdxsort();
-}
-
 pub fn radix_sort_i32(values: &mut [i32]) {
     if values.len() <= 1 {
         return;
@@ -103,6 +98,52 @@ pub fn radix_sort_i32(values: &mut [i32]) {
 
     values.copy_from_slice(&src);
 }
+
+pub fn radix_sort_i32_11bit(values: &mut [i32]) {
+    if values.len() <= 1 {
+        return;
+    }
+
+    let mut dst = vec![0i32; values.len()];
+    let mut counts_11 = [0usize; RADIX_11_BUCKETS];
+    let mut counts_10 = [0usize; RADIX_10_BUCKETS];
+
+    radix_sort_single_pass::<RADIX_11_BUCKETS>(values, &mut dst, &mut counts_11, 0);
+    radix_sort_single_pass::<RADIX_11_BUCKETS>(&dst, values, &mut counts_11, 11);
+    radix_sort_single_pass::<RADIX_10_BUCKETS>(values, &mut dst, &mut counts_10, 22);
+
+    values.copy_from_slice(&dst);
+}
+
+pub fn radix_sort_single_pass<const BUCKETS: usize>(
+    src: &[i32],
+    dst: &mut [i32],
+    counts: &mut [usize; BUCKETS],
+    shift: usize,
+) {
+    counts.fill(0);
+    let mask = (BUCKETS as u32) - 1;
+
+    for &value in src {
+        let key = ((value as u32) ^ 0x8000_0000) >> shift;
+        counts[(key & mask) as usize] += 1;
+    }
+
+    let mut sum = 0;
+    for count in counts.iter_mut() {
+        let current = *count;
+        *count = sum;
+        sum += current;
+    }
+
+    for &value in src {
+        let key = ((value as u32) ^ 0x8000_0000) >> shift;
+        let bucket = (key & mask) as usize;
+        dst[counts[bucket]] = value;
+        counts[bucket] += 1;
+    }
+}
+
 pub fn par_radix_sort_i32_8bit(values: &mut [i32]) {
     if values.len() <= 1 {
         return;
@@ -633,6 +674,18 @@ mod tests {
 
         v1.sort_unstable();
         par_radix_sort_i32_11bit(&mut v2);
+
+        assert_eq!(v1, v2)
+    }
+
+    #[test]
+    fn test_radix_sort_11bit() {
+        let v = Distribution::Random.values(100000);
+        let mut v1 = v.clone();
+        let mut v2 = v.clone();
+
+        v1.sort_unstable();
+        radix_sort_i32_11bit(&mut v2);
 
         assert_eq!(v1, v2)
     }

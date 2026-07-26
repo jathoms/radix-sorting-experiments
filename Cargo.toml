@@ -35,3 +35,7 @@ harness = false
 [[bench]]
 name = "msd_thresholds"
 harness = false
+
+[[bench]]
+name = "single_threaded"
+harness = false

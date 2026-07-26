@@ -1,9 +1,10 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
+use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 #[allow(unused_imports)]
 use sorting_benchmarks::msd::aflag::{
     msd_once_then_inplace_eager, msd_once_then_inplace_new, par_msd_inplace_eager,
 };
+use sorting_benchmarks::msd::paradis::paradis_sort_i32_to_output;
 #[allow(unused_imports)]
 use sorting_benchmarks::msd::sort::{
     BUCKETS_4, BUCKETS_7, i32_first_shift, par_msd_radix_sort_7bit, par_msd_radix_sort_in,
@@ -25,6 +26,9 @@ enum Pattern {
     Reversed,
     FewUnique,
     SameHighByte,
+    AdjacentSwaps,
+    SparseSwaps,
+    MostlySortedOutliers,
 }
 
 impl Pattern {
@@ -35,6 +39,9 @@ impl Pattern {
         Self::Reversed,
         Self::FewUnique,
         Self::SameHighByte,
+        Self::AdjacentSwaps,
+        Self::SparseSwaps,
+        Self::MostlySortedOutliers,
     ];
 
     fn name(self) -> &'static str {
@@ -44,6 +51,9 @@ impl Pattern {
             Self::Reversed => "reversed",
             Self::FewUnique => "few_unique",
             Self::SameHighByte => "same_high_byte",
+            Self::AdjacentSwaps => "adjacent_swaps",
+            Self::SparseSwaps => "sparse_swaps",
+            Self::MostlySortedOutliers => "mostly_sorted_outliers",
         }
     }
 
@@ -54,6 +64,9 @@ impl Pattern {
             Self::Reversed => (0..size).rev().map(centered_value).collect(),
             Self::FewUnique => shuffled(size, |i| (i as i32 % 128) - 64),
             Self::SameHighByte => shuffled(size, |i| pseudo_random_i32(i as u32) & 0x00ff_ffff),
+            Self::AdjacentSwaps => adjacent_swaps(size),
+            Self::SparseSwaps => sparse_swaps(size),
+            Self::MostlySortedOutliers => mostly_sorted_outliers(size),
         }
     }
 }
@@ -93,11 +106,14 @@ fn msd_patterns(c: &mut Criterion) {
                 size,
                 &input,
                 |input, output| {
-                    let mut values = input.to_vec();
-                    msd_once_then_inplace_eager(&mut values, output);
+                    msd_once_then_inplace_eager(&input, output);
                     black_box(output);
                 },
             );
+            bench_to_output(&mut group, "paradis_like", size, &input, |input, output| {
+                paradis_sort_i32_to_output(input, output);
+                black_box(output);
+            });
             // bench_lsd_scratch(&mut group, "par_lsd_11bit_scratch", size, &input);
         }
 
@@ -154,6 +170,36 @@ where
     let mut values = (0..size).map(&mut value).collect::<Vec<_>>();
     let mut rng = StdRng::seed_from_u64(42);
     values.shuffle(&mut rng);
+    values
+}
+
+fn adjacent_swaps(size: usize) -> Vec<i32> {
+    let mut values = (0..size).map(centered_value).collect::<Vec<_>>();
+    for i in (0..size.saturating_sub(1)).step_by(100) {
+        values.swap(i, i + 1);
+    }
+    values
+}
+
+fn sparse_swaps(size: usize) -> Vec<i32> {
+    let mut values = (0..size).map(centered_value).collect::<Vec<_>>();
+    let mut rng = StdRng::seed_from_u64(42);
+    let swaps = (size / 1_000).max(1);
+    for _ in 0..swaps {
+        let a = rng.random_range(0..size);
+        let b = rng.random_range(0..size);
+        values.swap(a, b);
+    }
+    values
+}
+
+fn mostly_sorted_outliers(size: usize) -> Vec<i32> {
+    let mut values = (0..size).map(centered_value).collect::<Vec<_>>();
+    let outliers = (size / 100).max(1);
+    for i in 0..outliers {
+        let index = i * size / outliers;
+        values[index] = pseudo_random_i32(i as u32);
+    }
     values
 }
 
