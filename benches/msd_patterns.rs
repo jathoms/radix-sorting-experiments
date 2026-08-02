@@ -72,7 +72,7 @@ impl Pattern {
 }
 
 fn msd_patterns(c: &mut Criterion) {
-    for pattern in [Pattern::SameHighByte] {
+    for pattern in Pattern::ALL {
         let mut group = c.benchmark_group(format!("msd_patterns/{}", pattern.name()));
 
         for &size in SIZES {
